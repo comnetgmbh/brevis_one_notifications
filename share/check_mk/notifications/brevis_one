@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+# -*- encoding: utf-8; py-indent-offset: 4 -*-
+# Brevis.one SMS Gateway
+
+# Copyright 2021 Fabian Binder, comNET GmbH <fabian.binder@comnetgmbh.com>
+#
+# This file is part of Brevis_one_notifications.
+#
+# Brevis_one_notifications is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# Brevis_one_notifications is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with Brevis_one_notifications.  If not, see <http://www.gnu.org/licenses/>.
+#
+
+import sys, os, urllib
+import requests
+
+try:
+    import urllib3
+    urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
+except:
+    from requests.packages.urllib3.exceptions import InsecureRequestWarning
+    requests.packages.urllib3.disable_warnings(InsecureRequestWarning)
+
+# user with permission to use Web-API of gateway
+username                = os.environ.get("NOTIFY_PARAMETER_USERNAME")
+password                = os.environ.get("NOTIFY_PARAMETER_PASSWORD")
+hostnames               = os.environ.get("NOTIFY_PARAMETER_HOSTS")
+ignore_missing_contact  = os.environ.get("NOTIFY_PARAMETER_IGNORE_MISSING")
+to                      = os.environ.get("NOTIFY_CONTACTPAGER")
+contact                 = os.environ.get("NOTIFY_CONTACTNAME")
+message                 = "[HOST] " + os.environ['NOTIFY_HOSTNAME'] + " "
+
+if hostnames == None:
+    sys.stdout.write("No brevis.one hostname given. Please configure the hostname in the notification settings.\n")
+    sys.exit(1)
+
+if to == "":
+    sys.stdout.write("The user %s has no phone number configured.\n" % contact)
+    if ignore_missing_contact == 'True':
+        sys.exit(0)
+    else:
+        sys.exit(1)
+
+hostnames = hostnames.split()
+
+if os.environ['NOTIFY_WHAT'] == 'SERVICE':
+    # Service notification
+    message += "[SERVICE] " + os.environ['NOTIFY_SERVICESTATE'] + ": "
+    message += os.environ['NOTIFY_SERVICEDESC'] + " - "
+    message += os.environ['NOTIFY_SERVICEOUTPUT'] + " - "
+    message += os.environ['NOTIFY_SHORTDATETIME']
+else:
+    # Host notification
+    message += "is " + os.environ['NOTIFY_HOSTSTATE'] + " - "
+    message += os.environ['NOTIFY_SHORTDATETIME']
+
+for hostname in hostnames:
+    uri = "%s/api.php?" % hostname + urllib.parse.urlencode([
+        ("username", username),
+        ("password", password),
+        ("to",       to      ),
+        ("text",     message )
+    ])
+
+    try:
+        try: # First, try HTTPS
+            response = requests.get("https://" + uri, verify=False)
+        except:
+            response = requests.get("http://" + uri)
+
+        if response.status_code == 200:
+            status = requests.get("http://"+hostname+"/check.php?option=state", verify = False).text
+            if ("Blocked" in status) or ("Trouble" in status) or ("Unknown" in status):
+                sys.stdout.write("The brevis.one gateway %s seems to have an error: %s\n" % (hostname, status))
+            else:
+                sys.stdout.write("Successfully sent SMS to %s\n" % to)
+                sys.exit(0)
+        else:
+            sys.stdout.write("HTTP Error sending SMS to %s: HTTP error code %s\n" % (to, handle.getcode()))
+            sys.stdout.write("URL was %s\n" % uri)
+    except Exception as e:
+        sys.stdout.write("Error sending SMS to %s via %s: %s\n" % (to, hostname, e))
+
+sys.stdout.write("CRITICAL ERROR - No gateway for sending SMS has responded with an OK state!\n")
+sys.exit(1)
